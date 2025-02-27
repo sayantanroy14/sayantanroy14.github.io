@@ -1,1 +1,584 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
 
+#define MAX_NON_TERMINALS 10
+#define MAX_TERMINALS 10
+#define MAX_PRODUCTIONS 20
+#define MAX_PRODUCTION_LENGTH 20
+#define MAX_SYMBOL_LENGTH 5
+#define EPSILON "ε"
+#define END_MARKER "$"
+
+// Structure to represent a grammar
+typedef struct {
+    char nonTerminals[MAX_NON_TERMINALS][MAX_SYMBOL_LENGTH];
+    int numNonTerminals;
+    
+    char terminals[MAX_TERMINALS][MAX_SYMBOL_LENGTH];
+    int numTerminals;
+    
+    // Productions for each non-terminal
+    char productions[MAX_NON_TERMINALS][MAX_PRODUCTIONS][MAX_PRODUCTION_LENGTH];
+    int numProductions[MAX_NON_TERMINALS];
+    
+    char startSymbol[MAX_SYMBOL_LENGTH];
+} Grammar;
+
+// Structure to represent sets (FIRST and FOLLOW)
+typedef struct {
+    char symbols[MAX_TERMINALS + 1][MAX_SYMBOL_LENGTH]; // +1 for epsilon
+    int count;
+} Set;
+
+// Function declarations
+void initializeGrammar(Grammar *grammar);
+void addNonTerminal(Grammar *grammar, const char *symbol);
+void addTerminal(Grammar *grammar, const char *symbol);
+void addProduction(Grammar *grammar, const char *nonTerminal, const char *production);
+int findNonTerminalIndex(Grammar *grammar, const char *symbol);
+int findTerminalIndex(Grammar *grammar, const char *symbol);
+bool isNonTerminal(Grammar *grammar, const char *symbol);
+bool isTerminal(Grammar *grammar, const char *symbol);
+void computeFirstSets(Grammar *grammar, Set firstSets[]);
+void computeFollowSets(Grammar *grammar, Set firstSets[], Set followSets[]);
+void addToSet(Set *set, const char *symbol);
+bool isInSet(Set *set, const char *symbol);
+void printSet(Set *set);
+void getFirstOfProduction(Grammar *grammar, Set firstSets[], char *production, Set *resultSet);
+void tokenizeProduction(char *production, char symbols[][MAX_SYMBOL_LENGTH], int *numSymbols);
+void generateLL1Table(Grammar *grammar, Set firstSets[], Set followSets[]);
+
+int main() {
+    Grammar grammar;
+    initializeGrammar(&grammar);
+    
+    // Add non-terminals
+    addNonTerminal(&grammar, "E");
+    addNonTerminal(&grammar, "E'");
+    addNonTerminal(&grammar, "T");
+    addNonTerminal(&grammar, "T'");
+    addNonTerminal(&grammar, "F");
+    
+    // Add terminals
+    addTerminal(&grammar, "+");
+    addTerminal(&grammar, "*");
+    addTerminal(&grammar, "(");
+    addTerminal(&grammar, ")");
+    addTerminal(&grammar, "id");
+    
+    // Set start symbol
+    strcpy(grammar.startSymbol, "E");
+    
+    // Add productions
+    addProduction(&grammar, "E", "T E'");
+    addProduction(&grammar, "E", EPSILON);
+    addProduction(&grammar, "E'", "+ T E'");
+    addProduction(&grammar, "E'", EPSILON);
+    addProduction(&grammar, "T", "F T'");
+    addProduction(&grammar, "T'", "* F T'");
+    addProduction(&grammar, "T'", EPSILON);
+    addProduction(&grammar, "F", "( E )");
+    addProduction(&grammar, "F", "id");
+    
+    // Initialize FIRST and FOLLOW sets
+    Set firstSets[MAX_NON_TERMINALS];
+    Set followSets[MAX_NON_TERMINALS];
+    
+    for (int i = 0; i < grammar.numNonTerminals; i++) {
+        firstSets[i].count = 0;
+        followSets[i].count = 0;
+    }
+    
+    // Compute FIRST sets
+    computeFirstSets(&grammar, firstSets);
+    
+    // Print FIRST sets
+    printf("FIRST Sets:\n");
+    for (int i = 0; i < grammar.numNonTerminals; i++) {
+        printf("FIRST(%s) = { ", grammar.nonTerminals[i]);
+        printSet(&firstSets[i]);
+        printf(" }\n");
+    }
+    
+    // Compute FOLLOW sets
+    computeFollowSets(&grammar, firstSets, followSets);
+    
+    // Print FOLLOW sets
+    printf("\nFOLLOW Sets:\n");
+    for (int i = 0; i < grammar.numNonTerminals; i++) {
+        printf("FOLLOW(%s) = { ", grammar.nonTerminals[i]);
+        printSet(&followSets[i]);
+        printf(" }\n");
+    }
+    
+    // Generate LL(1) parsing table
+    printf("\nLL(1) Parsing Table:\n");
+    generateLL1Table(&grammar, firstSets, followSets);
+    
+    return 0;
+}
+
+// Initialize the grammar structure
+void initializeGrammar(Grammar *grammar) {
+    grammar->numNonTerminals = 0;
+    grammar->numTerminals = 0;
+    
+    for (int i = 0; i < MAX_NON_TERMINALS; i++) {
+        grammar->numProductions[i] = 0;
+    }
+}
+
+// Add a non-terminal to the grammar
+void addNonTerminal(Grammar *grammar, const char *symbol) {
+    if (grammar->numNonTerminals < MAX_NON_TERMINALS) {
+        strcpy(grammar->nonTerminals[grammar->numNonTerminals], symbol);
+        grammar->numNonTerminals++;
+    } else {
+        printf("Error: Maximum number of non-terminals reached\n");
+    }
+}
+
+// Add a terminal to the grammar
+void addTerminal(Grammar *grammar, const char *symbol) {
+    if (grammar->numTerminals < MAX_TERMINALS) {
+        strcpy(grammar->terminals[grammar->numTerminals], symbol);
+        grammar->numTerminals++;
+    } else {
+        printf("Error: Maximum number of terminals reached\n");
+    }
+}
+
+// Add a production to a non-terminal
+void addProduction(Grammar *grammar, const char *nonTerminal, const char *production) {
+    int index = findNonTerminalIndex(grammar, nonTerminal);
+    
+    if (index != -1) {
+        int prodIndex = grammar->numProductions[index];
+        if (prodIndex < MAX_PRODUCTIONS) {
+            strcpy(grammar->productions[index][prodIndex], production);
+            grammar->numProductions[index]++;
+        } else {
+            printf("Error: Maximum number of productions reached for %s\n", nonTerminal);
+        }
+    } else {
+        printf("Error: Non-terminal %s not found\n", nonTerminal);
+    }
+}
+
+// Find the index of a non-terminal in the grammar
+int findNonTerminalIndex(Grammar *grammar, const char *symbol) {
+    for (int i = 0; i < grammar->numNonTerminals; i++) {
+        if (strcmp(grammar->nonTerminals[i], symbol) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Find the index of a terminal in the grammar
+int findTerminalIndex(Grammar *grammar, const char *symbol) {
+    for (int i = 0; i < grammar->numTerminals; i++) {
+        if (strcmp(grammar->terminals[i], symbol) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Check if a symbol is a non-terminal
+bool isNonTerminal(Grammar *grammar, const char *symbol) {
+    return findNonTerminalIndex(grammar, symbol) != -1;
+}
+
+// Check if a symbol is a terminal
+bool isTerminal(Grammar *grammar, const char *symbol) {
+    return findTerminalIndex(grammar, symbol) != -1;
+}
+
+// Compute FIRST sets for all non-terminals
+void computeFirstSets(Grammar *grammar, Set firstSets[]) {
+    bool changed = true;
+    
+    // Continue until no more changes are made
+    while (changed) {
+        changed = false;
+        
+        // For each non-terminal
+        for (int i = 0; i < grammar->numNonTerminals; i++) {
+            const char *nonTerminal = grammar->nonTerminals[i];
+            int ntIndex = findNonTerminalIndex(grammar, nonTerminal);
+            
+            // For each production of the non-terminal
+            for (int j = 0; j < grammar->numProductions[ntIndex]; j++) {
+                char *production = grammar->productions[ntIndex][j];
+                
+                if (strcmp(production, EPSILON) == 0) {
+                    // If production is epsilon, add epsilon to FIRST set
+                    if (!isInSet(&firstSets[ntIndex], EPSILON)) {
+                        addToSet(&firstSets[ntIndex], EPSILON);
+                        changed = true;
+                    }
+                } else {
+                    // Split production into symbols
+                    char symbols[MAX_PRODUCTION_LENGTH][MAX_SYMBOL_LENGTH];
+                    int numSymbols = 0;
+                    tokenizeProduction(production, symbols, &numSymbols);
+                    
+                    int symbolIndex = 0;
+                    bool allDeriveEpsilon = true;
+                    
+                    // Process each symbol in the production
+                    while (symbolIndex < numSymbols && allDeriveEpsilon) {
+                        char *currentSymbol = symbols[symbolIndex];
+                        
+                        if (isTerminal(grammar, currentSymbol)) {
+                            // If it's a terminal, add it to FIRST set and break
+                            if (!isInSet(&firstSets[ntIndex], currentSymbol)) {
+                                addToSet(&firstSets[ntIndex], currentSymbol);
+                                changed = true;
+                            }
+                            allDeriveEpsilon = false;
+                        } else if (isNonTerminal(grammar, currentSymbol)) {
+                            // If it's a non-terminal, add its FIRST set (except epsilon)
+                            int symbolNtIndex = findNonTerminalIndex(grammar, currentSymbol);
+                            
+                            for (int k = 0; k < firstSets[symbolNtIndex].count; k++) {
+                                char *first = firstSets[symbolNtIndex].symbols[k];
+                                
+                                if (strcmp(first, EPSILON) != 0 && !isInSet(&firstSets[ntIndex], first)) {
+                                    addToSet(&firstSets[ntIndex], first);
+                                    changed = true;
+                                }
+                            }
+                            
+                            // Check if this non-terminal can derive epsilon
+                            if (!isInSet(&firstSets[symbolNtIndex], EPSILON)) {
+                                allDeriveEpsilon = false;
+                            }
+                        }
+                        
+                        symbolIndex++;
+                    }
+                    
+                    // If all symbols in the production can derive epsilon, add epsilon to FIRST set
+                    if (allDeriveEpsilon && !isInSet(&firstSets[ntIndex], EPSILON)) {
+                        addToSet(&firstSets[ntIndex], EPSILON);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Compute FOLLOW sets for all non-terminals
+void computeFollowSets(Grammar *grammar, Set firstSets[], Set followSets[]) {
+    // Add $ to the FOLLOW set of the start symbol
+    int startSymbolIndex = findNonTerminalIndex(grammar, grammar->startSymbol);
+    addToSet(&followSets[startSymbolIndex], END_MARKER);
+    
+    bool changed = true;
+    
+    // Continue until no more changes are made
+    while (changed) {
+        changed = false;
+        
+        // For each production in the grammar
+        for (int i = 0; i < grammar->numNonTerminals; i++) {
+            const char *nonTerminal = grammar->nonTerminals[i];
+            int ntIndex = findNonTerminalIndex(grammar, nonTerminal);
+            
+            for (int j = 0; j < grammar->numProductions[ntIndex]; j++) {
+                char *production = grammar->productions[ntIndex][j];
+                
+                if (strcmp(production, EPSILON) == 0) {
+                    continue;
+                }
+                
+                // Split production into symbols
+                char symbols[MAX_PRODUCTION_LENGTH][MAX_SYMBOL_LENGTH];
+                int numSymbols = 0;
+                tokenizeProduction(production, symbols, &numSymbols);
+                
+                // For each symbol in the production
+                for (int k = 0; k < numSymbols; k++) {
+                    char *currentSymbol = symbols[k];
+                    
+                    // If it's a non-terminal
+                    if (isNonTerminal(grammar, currentSymbol)) {
+                        int currentSymbolIndex = findNonTerminalIndex(grammar, currentSymbol);
+                        
+                        // If it's the last symbol
+                        if (k == numSymbols - 1) {
+                            // Add everything in FOLLOW(nonTerminal) to FOLLOW(currentSymbol)
+                            for (int l = 0; l < followSets[ntIndex].count; l++) {
+                                if (!isInSet(&followSets[currentSymbolIndex], followSets[ntIndex].symbols[l])) {
+                                    addToSet(&followSets[currentSymbolIndex], followSets[ntIndex].symbols[l]);
+                                    changed = true;
+                                }
+                            }
+                        } else {
+                            // Compute FIRST of the rest of the string
+                            bool allCanDeriveEpsilon = true;
+                            int m = k + 1;
+                            
+                            while (m < numSymbols && allCanDeriveEpsilon) {
+                                char *nextSymbol = symbols[m];
+                                
+                                if (isTerminal(grammar, nextSymbol)) {
+                                    // If it's a terminal, add it to FOLLOW and break
+                                    if (!isInSet(&followSets[currentSymbolIndex], nextSymbol)) {
+                                        addToSet(&followSets[currentSymbolIndex], nextSymbol);
+                                        changed = true;
+                                    }
+                                    allCanDeriveEpsilon = false;
+                                } else if (isNonTerminal(grammar, nextSymbol)) {
+                                    // Add everything in FIRST(nextSymbol) except epsilon to FOLLOW(currentSymbol)
+                                    int nextSymbolIndex = findNonTerminalIndex(grammar, nextSymbol);
+                                    
+                                    for (int l = 0; l < firstSets[nextSymbolIndex].count; l++) {
+                                        char *first = firstSets[nextSymbolIndex].symbols[l];
+                                        
+                                        if (strcmp(first, EPSILON) != 0 && !isInSet(&followSets[currentSymbolIndex], first)) {
+                                            addToSet(&followSets[currentSymbolIndex], first);
+                                            changed = true;
+                                        }
+                                    }
+                                    
+                                    // If epsilon is not in FIRST(nextSymbol), we're done
+                                    if (!isInSet(&firstSets[nextSymbolIndex], EPSILON)) {
+                                        allCanDeriveEpsilon = false;
+                                    }
+                                }
+                                
+                                m++;
+                            }
+                            
+                            // If all symbols after k can derive epsilon, add FOLLOW(nonTerminal) to FOLLOW(currentSymbol)
+                            if (allCanDeriveEpsilon) {
+                                for (int l = 0; l < followSets[ntIndex].count; l++) {
+                                    if (!isInSet(&followSets[currentSymbolIndex], followSets[ntIndex].symbols[l])) {
+                                        addToSet(&followSets[currentSymbolIndex], followSets[ntIndex].symbols[l]);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Add a symbol to a set if it's not already there
+void addToSet(Set *set, const char *symbol) {
+    if (!isInSet(set, symbol) && set->count < MAX_TERMINALS + 1) {
+        strcpy(set->symbols[set->count], symbol);
+        set->count++;
+    }
+}
+
+// Check if a symbol is in a set
+bool isInSet(Set *set, const char *symbol) {
+    for (int i = 0; i < set->count; i++) {
+        if (strcmp(set->symbols[i], symbol) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Print a set
+void printSet(Set *set) {
+    for (int i = 0; i < set->count; i++) {
+        printf("%s", set->symbols[i]);
+        if (i < set->count - 1) {
+            printf(", ");
+        }
+    }
+}
+
+// Helper function to tokenize a production string into symbols
+void tokenizeProduction(char *production, char symbols[][MAX_SYMBOL_LENGTH], int *numSymbols) {
+    char *token = strtok(production, " ");
+    *numSymbols = 0;
+    
+    while (token != NULL) {
+        strcpy(symbols[*numSymbols], token);
+        (*numSymbols)++;
+        token = strtok(NULL, " ");
+    }
+}
+
+// Get FIRST set of a production (sequence of symbols)
+void getFirstOfProduction(Grammar *grammar, Set firstSets[], char *production, Set *resultSet) {
+    resultSet->count = 0;
+    
+    // If production is epsilon, return epsilon
+    if (strcmp(production, EPSILON) == 0) {
+        addToSet(resultSet, EPSILON);
+        return;
+    }
+    
+    // Split production into symbols
+    char symbols[MAX_PRODUCTION_LENGTH][MAX_SYMBOL_LENGTH];
+    int numSymbols = 0;
+    
+    // Create a copy of production for tokenizing
+    char productionCopy[MAX_PRODUCTION_LENGTH];
+    strcpy(productionCopy, production);
+    
+    tokenizeProduction(productionCopy, symbols, &numSymbols);
+    
+    bool allCanDeriveEpsilon = true;
+    int i = 0;
+    
+    while (i < numSymbols && allCanDeriveEpsilon) {
+        char *symbol = symbols[i];
+        
+        if (isTerminal(grammar, symbol)) {
+            addToSet(resultSet, symbol);
+            allCanDeriveEpsilon = false;
+        } else if (isNonTerminal(grammar, symbol)) {
+            int ntIndex = findNonTerminalIndex(grammar, symbol);
+            
+            // Add all elements of FIRST(symbol) except epsilon to result set
+            for (int j = 0; j < firstSets[ntIndex].count; j++) {
+                if (strcmp(firstSets[ntIndex].symbols[j], EPSILON) != 0) {
+                    addToSet(resultSet, firstSets[ntIndex].symbols[j]);
+                }
+            }
+            
+            // If epsilon is not in FIRST(symbol), no need to continue
+            if (!isInSet(&firstSets[ntIndex], EPSILON)) {
+                allCanDeriveEpsilon = false;
+            }
+        }
+        
+        i++;
+    }
+    
+    // If all symbols can derive epsilon, add epsilon to result set
+    if (allCanDeriveEpsilon) {
+        addToSet(resultSet, EPSILON);
+    }
+}
+
+// Generate the LL(1) parsing table
+void generateLL1Table(Grammar *grammar, Set firstSets[], Set followSets[]) {
+    // Add end marker to terminals
+    addTerminal(grammar, END_MARKER);
+    
+    // Create parsing table (2D array of strings)
+    char parsingTable[MAX_NON_TERMINALS][MAX_TERMINALS + 1][MAX_PRODUCTION_LENGTH];
+    
+    // Initialize parsing table with empty strings
+    for (int i = 0; i < grammar->numNonTerminals; i++) {
+        for (int j = 0; j <= grammar->numTerminals; j++) {
+            strcpy(parsingTable[i][j], "");
+        }
+    }
+    
+    // Fill the parsing table
+    for (int i = 0; i < grammar->numNonTerminals; i++) {
+        const char *nonTerminal = grammar->nonTerminals[i];
+        int ntIndex = findNonTerminalIndex(grammar, nonTerminal);
+        
+        for (int j = 0; j < grammar->numProductions[ntIndex]; j++) {
+            char *production = grammar->productions[ntIndex][j];
+            Set firstOfProduction;
+            firstOfProduction.count = 0;
+            
+            if (strcmp(production, EPSILON) == 0) {
+                // If production is epsilon, use FOLLOW set
+                for (int k = 0; k < followSets[ntIndex].count; k++) {
+                    char *follow = followSets[ntIndex].symbols[k];
+                    int terminalIndex = findTerminalIndex(grammar, follow);
+                    
+                    if (terminalIndex != -1) {
+                        // Check for conflict
+                        if (strlen(parsingTable[ntIndex][terminalIndex]) > 0) {
+                            printf("Grammar is not LL(1)! Conflict at [%s, %s]\n", nonTerminal, follow);
+                            printf("  Existing: %s\n", parsingTable[ntIndex][terminalIndex]);
+                            printf("  New: %s\n", production);
+                        } else {
+                            strcpy(parsingTable[ntIndex][terminalIndex], production);
+                        }
+                    }
+                }
+            } else {
+                // Create a temporary copy for tokenizing
+                char productionCopy[MAX_PRODUCTION_LENGTH];
+                strcpy(productionCopy, production);
+                
+                // Get FIRST set of the production
+                getFirstOfProduction(grammar, firstSets, productionCopy, &firstOfProduction);
+                
+                // For each terminal in FIRST(production), add entry to parsing table
+                for (int k = 0; k < firstOfProduction.count; k++) {
+                    char *first = firstOfProduction.symbols[k];
+                    
+                    if (strcmp(first, EPSILON) != 0) {
+                        int terminalIndex = findTerminalIndex(grammar, first);
+                        
+                        if (terminalIndex != -1) {
+                            // Check for conflict
+                            if (strlen(parsingTable[ntIndex][terminalIndex]) > 0) {
+                                printf("Grammar is not LL(1)! Conflict at [%s, %s]\n", nonTerminal, first);
+                                printf("  Existing: %s\n", parsingTable[ntIndex][terminalIndex]);
+                                printf("  New: %s\n", production);
+                            } else {
+                                strcpy(parsingTable[ntIndex][terminalIndex], production);
+                            }
+                        }
+                    }
+                }
+                
+                // If the production can derive epsilon, use FOLLOW set
+                if (isInSet(&firstOfProduction, EPSILON)) {
+                    for (int k = 0; k < followSets[ntIndex].count; k++) {
+                        char *follow = followSets[ntIndex].symbols[k];
+                        int terminalIndex = findTerminalIndex(grammar, follow);
+                        
+                        if (terminalIndex != -1) {
+                            // Check for conflict
+                            if (strlen(parsingTable[ntIndex][terminalIndex]) > 0) {
+                                printf("Grammar is not LL(1)! Conflict at [%s, %s]\n", nonTerminal, follow);
+                                printf("  Existing: %s\n", parsingTable[ntIndex][terminalIndex]);
+                                printf("  New: %s\n", production);
+                            } else {
+                                strcpy(parsingTable[ntIndex][terminalIndex], production);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Display the parsing table
+    printf("   | ");
+    for (int j = 0; j < grammar->numTerminals; j++) {
+        printf("%-10s | ", grammar->terminals[j]);
+    }
+    printf("\n");
+    
+    printf("---+-");
+    for (int j = 0; j < grammar->numTerminals; j++) {
+        printf("------------+-");
+    }
+    printf("\n");
+    
+    for (int i = 0; i < grammar->numNonTerminals; i++) {
+        printf("%-3s| ", grammar->nonTerminals[i]);
+        
+        for (int j = 0; j < grammar->numTerminals; j++) {
+            printf("%-10s | ", parsingTable[i][j]);
+        }
+        
+        printf("\n");
+    }
+}
